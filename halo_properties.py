@@ -160,11 +160,12 @@ class SubhaloBoundMasses(HaloProperty):
 
         # Find the simulation mass unit
         mass_unit = unyt.Unit("snap_mass",   registry=self.unit_registry)
-        zero_mass = unyt.unyt_quantity(0.0, units=mass_unit)
 
         # Loop over particle types
-        total_initial_mass = zero_mass
-        total_subgrid_mass = zero_mass
+        nr_part_all = unyt.unyt_quantity(0.0, units=unyt.dimensionless, registry=self.unit_registry)
+        total_mass_all = unyt.unyt_quantity(0.0, units=mass_unit)
+        total_initial_mass = unyt.unyt_quantity(0.0, units=mass_unit)
+        total_subgrid_mass = unyt.unyt_quantity(0.0, units=mass_unit)
         for ptype in data:
 
             # Find position and mass of particles in the group
@@ -176,6 +177,7 @@ class SubhaloBoundMasses(HaloProperty):
 
             # Store total mass of particles of this type
             total_mass[ptype] = np.sum(mass, dtype=float)
+            total_mass_all += total_mass[ptype]
 
             # Store centre of mass and velocity for particles of this type
             if total_mass[ptype] > 0.0:
@@ -187,6 +189,7 @@ class SubhaloBoundMasses(HaloProperty):
         
             # Accumulate total number of particles of this type
             nr_part[ptype] = unyt.unyt_quantity(pos.shape[0], units=unyt.dimensionless, dtype=int)
+            nr_part_all += nr_part[ptype]
 
             # Total stellar initial mass
             if ptype == "PartType4":
@@ -208,5 +211,5 @@ class SubhaloBoundMasses(HaloProperty):
             halo_result["CentreOfMassVelocity_"+ptype] = (cofm_vel[ptype],    "Centre of mass velocity of particles of type "+ptype)
         halo_result["StellarInitialMass"]              = (total_initial_mass, "Total initial mass of star particles")
         halo_result["BHSubgridMass"]                   = (total_subgrid_mass, "Total subgrid mass of black hole particles")
-    
-        
+        halo_result["Mass_All"]                        = (total_mass_all,     "Total subgrid mass of black hole particles")
+        halo_result["NumPart_All"]                     = (nr_part_all,        "Total number of particles")
