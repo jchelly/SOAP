@@ -208,9 +208,5 @@ class SubhaloBoundMasses(HaloProperty):
             halo_result["CentreOfMassVelocity_"+ptype] = (cofm_vel[ptype],    "Centre of mass velocity of particles of type "+ptype)
         halo_result["StellarInitialMass"]              = (total_initial_mass, "Total initial mass of star particles")
         halo_result["BHSubgridMass"]                   = (total_subgrid_mass, "Total subgrid mass of black hole particles")
-
-        # Find total masses and particle numbers
-        halo_result["Mass_All"]    = np.sum(unyt.unyt_array([total_mass[ptype] for ptype in data]))
-        halo_result["NumPart_All"] = np.sum(unyt.unyt_array([nr_part[ptype] for ptype in data]))
     
         

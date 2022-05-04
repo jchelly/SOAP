@@ -66,7 +66,9 @@ if __name__ == "__main__":
     comm_world.barrier()
     t0 = time.time()
     if comm_world_rank == 0:
-        print("Starting halo properties calculation on %d MPI ranks" % comm_world_size)
+        print("Starting halo properties for snapshot %d on %d MPI ranks" % (args.snapshot_nr, comm_world_size))
+        if args.reference_snapshot is not None:
+            print("Reference snapshot = %d", args.reference_snapshot)
 
     # Open the snapshot and read SWIFT cell structure, units etc
     if comm_world_rank == 0:
@@ -82,6 +84,18 @@ if __name__ == "__main__":
         parsec_cgs = cellgrid.constants["parsec"]
         solar_mass_cgs = cellgrid.constants["solar_mass"]
         a = cellgrid.a
+
+        # Report particle types in this snapshot
+        print("Particle types in this snapshot:")
+        for ptype in cellgrid.ptypes:
+            print("  %s" % ptype)
+        if len(cellgrid.ptypes_ref) > 0:
+            print("Particle types in reference snapshot:")
+            for ptype in cellgrid.ptypes_ref:
+                print("  %s" % ptype)
+        else:
+            print("No additional types from reference snapshot.")
+
     else:
         cellgrid = None
         parsec_cgs = None
