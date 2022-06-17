@@ -196,7 +196,7 @@ class SOProperties(HaloProperty):
             "SubgridMasses",
             "Velocities",
         ],
-        #        "PartType6": ["Coordinates", "Masses", "Weights"],
+        "PartType6": ["Coordinates", "Masses", "Weights"],
     }
 
     # List of properties that get computed
