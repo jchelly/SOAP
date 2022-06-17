@@ -151,6 +151,10 @@ class ChunkTask:
         # Repeat until all halos have been done
         task_time_all_iterations = 0.0
         while True:
+            
+            # Report maximum read radius
+            max_read_radius = read_radius.full.max()
+            message(f"maximum radius about any halo is {max_read_radius:.2f}")
         
             # Find the region we need to read in, allowing for particles outside their cells
             comm.barrier()
