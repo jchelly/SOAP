@@ -115,17 +115,18 @@ def process_single_halo(mesh, unit_registry, data, halo_prop_list,
                 break
 
         # Either the density is still too high or the property calculation failed.
-        required_radius = max_physical_radius_mpc*swift_mpc
+        search_radius = input_halo["search_radius"]
+        required_radius = (max_physical_radius_mpc*swift_mpc).to(search_radius.units)
         if required_radius > input_halo["read_radius"]:
             # A calculation has set its physical_radius_mpc larger than the region
             # which we read in, so we can't process the halo on this iteration regardless
             # of the current radius.
-            input_halo["search_radius"] = max(input_halo["search_radius"], required_radius)
+            input_halo["search_radius"] = max(search_radius, required_radius)
             return None
         elif current_radius >= input_halo["read_radius"]:
             # The current radius has exceeded the region read in. Will need to redo this
             # halo using current_radius as the starting point for the next iteration.
-            input_halo["search_radius"] = max(input_halo["search_radius"], current_radius)
+            input_halo["search_radius"] = max(search_radius, current_radius)
             return None
         else:
             # We still have a large enough region in memory that we can try a larger radius
