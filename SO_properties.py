@@ -11,6 +11,75 @@ from dataset_names import mass_dataset
 from mpi4py import MPI
 
 
+def cumulative_mass_and_density(input_halo, nu_density, data):
+
+    centre = input_halo["cofp"]
+
+    # Make an array of particle masses, radii and positions
+    mass = []
+    radius = []
+    position = []
+    velocity = []
+    types = []
+    groupnr = []
+    for ptype in data:
+        if ptype == "PartType6":
+            continue
+        mass.append(data[ptype][mass_dataset(ptype)])
+        pos = data[ptype]["Coordinates"] - centre[None, :]
+        position.append(pos)
+        r = np.sqrt(np.sum(pos**2, axis=1))
+        radius.append(r)
+        velocity.append(data[ptype]["Velocities"])
+        typearr = np.zeros(r.shape, dtype="U9")
+        typearr[:] = ptype
+        types.append(typearr)
+        groupnr.append(data[ptype]["GroupNr_bound"])
+    mass = unyt.array.uconcatenate(mass)
+    radius = unyt.array.uconcatenate(radius)
+    position = unyt.array.uconcatenate(position)
+    velocity = unyt.array.uconcatenate(velocity)
+    types = np.concatenate(types)
+    groupnr = unyt.array.uconcatenate(groupnr)
+
+    # figure out which particles in the list are bound to a halo that is not the
+    # central halo
+    is_bound_to_satellite = (groupnr >= 0) & (groupnr != input_halo["index"])
+
+    # add neutrinos
+    if "PartType6" in data:
+        numass = data["PartType6"]["Masses"] * data["PartType6"]["Weights"]
+        pos = data["PartType6"]["Coordinates"] - centre[None, :]
+        nur = np.sqrt(np.sum(pos**2, axis=1))
+        all_mass = unyt.array.uconcatenate([mass, numass])
+        all_r = unyt.array.uconcatenate([radius, nur])
+    else:
+        all_mass = mass
+        all_r = radius
+
+    # Sort by radius
+    order = np.argsort(all_r)
+    ordered_radius = all_r[order]
+    cumulative_mass = np.cumsum(all_mass[order], dtype=np.float64).astype(
+        mass.dtype
+    )
+    # add mean neutrino mass
+    cumulative_mass += nu_density * 4.0 / 3.0 * np.pi * ordered_radius**3
+
+    # Compute density within radius of each particle.
+    # Will need to skip any at zero radius.
+    # Note that because of the definition of the centre of potential, the first
+    # particle *should* be at r=0. We need to manually exclude it, in case round
+    # off error places it at a very small non-zero radius.
+    nskip = max(1, np.argmax(ordered_radius > 0.0 * ordered_radius.units))
+    ordered_radius = ordered_radius[nskip:]
+    cumulative_mass = cumulative_mass[nskip:]
+    nr_parts = len(ordered_radius)
+    density = cumulative_mass / (4.0 / 3.0 * np.pi * ordered_radius**3)
+
+    return nr_parts, ordered_radius, density, cumulative_mass, radius, types, is_bound_to_satellite, position, velocity, mass
+
+    
 def cumulative_mass_intersection(r, rho_dim, slope_dim):
     """
     Function used to find the intersection of the cumulative mass curve at fixed
@@ -548,67 +617,8 @@ class SOProperties(HaloProperty):
         # Find the halo centre of potential
         centre = input_halo["cofp"]
 
-        # Make an array of particle masses, radii and positions
-        mass = []
-        radius = []
-        position = []
-        velocity = []
-        types = []
-        groupnr = []
-        for ptype in data:
-            if ptype == "PartType6":
-                continue
-            mass.append(data[ptype][mass_dataset(ptype)])
-            pos = data[ptype]["Coordinates"] - centre[None, :]
-            position.append(pos)
-            r = np.sqrt(np.sum(pos**2, axis=1))
-            radius.append(r)
-            velocity.append(data[ptype]["Velocities"])
-            typearr = np.zeros(r.shape, dtype="U9")
-            typearr[:] = ptype
-            types.append(typearr)
-            groupnr.append(data[ptype]["GroupNr_bound"])
-        mass = unyt.array.uconcatenate(mass)
-        radius = unyt.array.uconcatenate(radius)
-        position = unyt.array.uconcatenate(position)
-        velocity = unyt.array.uconcatenate(velocity)
-        types = np.concatenate(types)
-        groupnr = unyt.array.uconcatenate(groupnr)
-
-        # figure out which particles in the list are bound to a halo that is not the
-        # central halo
-        is_bound_to_satellite = (groupnr >= 0) & (groupnr != input_halo["index"])
-
-        # add neutrinos
-        if "PartType6" in data:
-            numass = data["PartType6"]["Masses"] * data["PartType6"]["Weights"]
-            pos = data["PartType6"]["Coordinates"] - centre[None, :]
-            nur = np.sqrt(np.sum(pos**2, axis=1))
-            all_mass = unyt.array.uconcatenate([mass, numass])
-            all_r = unyt.array.uconcatenate([radius, nur])
-        else:
-            all_mass = mass
-            all_r = radius
-
-        # Sort by radius
-        order = np.argsort(all_r)
-        ordered_radius = all_r[order]
-        cumulative_mass = np.cumsum(all_mass[order], dtype=np.float64).astype(
-            mass.dtype
-        )
-        # add mean neutrino mass
-        cumulative_mass += self.nu_density * 4.0 / 3.0 * np.pi * ordered_radius**3
-
-        # Compute density within radius of each particle.
-        # Will need to skip any at zero radius.
-        # Note that because of the definition of the centre of potential, the first
-        # particle *should* be at r=0. We need to manually exclude it, in case round
-        # off error places it at a very small non-zero radius.
-        nskip = max(1, np.argmax(ordered_radius > 0.0 * ordered_radius.units))
-        ordered_radius = ordered_radius[nskip:]
-        cumulative_mass = cumulative_mass[nskip:]
-        nr_parts = len(ordered_radius)
-        density = cumulative_mass / (4.0 / 3.0 * np.pi * ordered_radius**3)
+        (nr_parts, ordered_radius, density, cumulative_mass, radius, types, is_bound_to_satellite,
+         position, velocity, mass) = cumulative_mass_and_density(input_halo, self.nu_density, data)
 
         reg = mass.units.registry
 
