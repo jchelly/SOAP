@@ -161,6 +161,30 @@ class ChunkTask:
             t1_mask = time.time()
             message("identified %d cells to read in %.2fs" % (nr_cells, t1_mask-t0_mask))
 
+            nr_halos = len(self.halo_arrays["ID"].full)
+            nr_increased = 0
+            if comm_rank == 0:
+                if np.any(mask==False):
+                    # Given the cell mask, find the radius in which we're guaranteed to have all of the
+                    # particles for each cell
+                    cell_complete_radius = cellgrid.complete_radius_from_mask(mask)
+
+                    # Calculate which cell each local halo is in
+                    halo_cell_index = (centre.full / cellgrid.cell_size[None,:]).to(unyt.dimensionless).value.astype(np.int32)
+
+                    # Where we have all particles in a larger radius than the halo's read_radius
+                    # (due to reading cells to process other halos) increase the read_radius
+                    halo_complete_radius = cell_complete_radius[halo_cell_index[:,0], halo_cell_index[:,1], halo_cell_index[:,2]]
+                    to_update = halo_complete_radius > read_radius.full
+                    nr_increased = np.sum(to_update)
+                    read_radius.full[to_update] = halo_complete_radius[to_update]
+                else:
+                    # We're reading the entire box in one chunk, so we have all of the particles.
+                    read_radius.full[...] = cellgrid.boxsize.to(read_radius.full.units)
+            read_radius.sync()
+            comm.barrier()
+            message(f"increased maximum search radius for {nr_increased} of {nr_halos} halos")
+
             # Get the cosmology info from the input snapshot
             critical_density = cellgrid.critical_density
             mean_density = cellgrid.mean_density
@@ -258,7 +282,6 @@ class ChunkTask:
 
             # Calculate the halo properties
             t0_halos = time.time()
-            nr_halos = len(self.halo_arrays["ID"].full)
             result_set, total_time, task_time, nr_left, nr_done = process_halos(comm, cellgrid.snap_unit_registry, data, mesh,
                                                                             self.halo_prop_list, critical_density,
                                                                             mean_density, boxsize, self.halo_arrays)
