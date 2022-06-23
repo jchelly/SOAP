@@ -97,12 +97,13 @@ def process_single_halo(mesh, unit_registry, data, halo_prop_list,
                 pos[:,:] = ((pos - offset) % boxsize) + offset
 
             # Try to compute properties of this halo which haven't been done yet
+            cache = {}
             for prop_nr, halo_prop in enumerate(halo_prop_list):
                 if halo_prop_done[prop_nr]:
                     # Already have the result for this one
                     continue
                 try:
-                    halo_prop.calculate(input_halo, current_radius, particle_data, halo_result)
+                    halo_prop.calculate(input_halo, current_radius, particle_data, halo_result, cache=cache)
                 except ReadRadiusTooSmallError:
                     # Search radius was too small, so will need to try again with a larger radius.
                     max_physical_radius_mpc = max(max_physical_radius_mpc, halo_prop.physical_radius_mpc)
@@ -110,6 +111,7 @@ def process_single_halo(mesh, unit_registry, data, halo_prop_list,
                 else:
                     # The property calculation worked!
                     halo_prop_done[prop_nr] = True
+            del cache
 
             # If we computed all of the properties, we're done with this halo
             if np.all(halo_prop_done):

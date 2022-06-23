@@ -599,7 +599,7 @@ class SOProperties(HaloProperty):
             self.SO_name = "BN98"
             self.label = f"within which the density is {self.critical_density_multiple:.2f} times the critical value"
 
-    def calculate(self, input_halo, search_radius, data, halo_result):
+    def calculate(self, input_halo, search_radius, data, halo_result, cache=None):
         """
         Compute spherical masses and overdensities for a halo
 
@@ -610,6 +610,7 @@ class SOProperties(HaloProperty):
                            has the particle coordinates for type 1
         halo_result      - dict with halo properties computed so far. Properties
                            computed here should be added to halo_result.
+        cache            - allows data to be shared between property calculations
 
         Input particle data arrays are unyt_arrays.
         """
@@ -617,8 +618,13 @@ class SOProperties(HaloProperty):
         # Find the halo centre of potential
         centre = input_halo["cofp"]
 
+        # Compute sorted density, mass etc arrays, if we didn't already
+        if cache is None:
+            cache = {}
+        if "SO_data" not in cache:
+            cache["SO_data"] = cumulative_mass_and_density(input_halo, self.nu_density, data)
         (nr_parts, ordered_radius, density, cumulative_mass, radius, types, is_bound_to_satellite,
-         position, velocity, mass) = cumulative_mass_and_density(input_halo, self.nu_density, data)
+         position, velocity, mass) = cache["SO_data"]
 
         reg = mass.units.registry
 
@@ -952,7 +958,7 @@ class RadiusMultipleSOProperties(SOProperties):
         self.requested_SOval = SOval
         self.multiple = multiple
 
-    def calculate(self, input_halo, search_radius, data, halo_result):
+    def calculate(self, input_halo, search_radius, data, halo_result, cache=None):
 
         # find the actual physical radius we want
         key = f"SO/{self.requested_SOval:.0f}_{self.requested_type}/r"
@@ -966,7 +972,7 @@ class RadiusMultipleSOProperties(SOProperties):
         if self.multiple * halo_result[key][0] > search_radius:
             raise ReadRadiusTooSmallError("SO radius multiple estimate was too small!")
 
-        super().calculate(input_halo, search_radius, data, halo_result)
+        super().calculate(input_halo, search_radius, data, halo_result, cache)
         return
 
 

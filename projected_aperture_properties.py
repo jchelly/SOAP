@@ -57,7 +57,7 @@ class ProjectedApertureProperties(HaloProperty):
 
         self.name = f"projected_aperture_{physical_radius_kpc:.0f}kpc"
 
-    def calculate(self, input_halo, search_radius, data, halo_result):
+    def calculate(self, input_halo, search_radius, data, halo_result, cache=None):
         """
         Compute centre of mass etc of bound particles
 
