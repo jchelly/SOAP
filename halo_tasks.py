@@ -96,6 +96,16 @@ def process_single_halo(mesh, unit_registry, data, halo_prop_list,
                 offset = input_halo["cofp"] - 0.5*boxsize
                 pos[:,:] = ((pos - offset) % boxsize) + offset
 
+            # Sort particles by radius
+            for ptype in particle_data:
+                pos = particle_data[ptype]["Coordinates"]
+                r = np.linalg.norm(pos - input_halo["cofp"][None,:], axis=1)
+                order = np.argsort(r)
+                for name in particle_data[ptype]:
+                    particle_data[ptype][name] = particle_data[ptype][name][order,...]
+                assert "Radius" not in particle_data[ptype]
+                particle_data[ptype]["Radius"] = r
+
             # Try to compute properties of this halo which haven't been done yet
             for prop_nr, halo_prop in enumerate(halo_prop_list):
                 if halo_prop_done[prop_nr]:
