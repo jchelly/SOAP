@@ -117,7 +117,10 @@ def process_single_halo(mesh, unit_registry, data, halo_prop_list,
 
         # Either the density is still too high or the property calculation failed.
         search_radius = input_halo["search_radius"]
-        required_radius = (max_physical_radius_mpc*swift_mpc).to(search_radius.units)
+        # To improve reproducibility, avoid setting the search radius exactly equal to the
+        # radius needed for the calculations so that particles right on the boundary don't
+        # get included/excluded depending on rounding error. Here we add a 1% safety factor.        
+        required_radius = (1.01*max_physical_radius_mpc*swift_mpc).to(search_radius.units)
         if required_radius > input_halo["read_radius"]:
             # A calculation has set its physical_radius_mpc larger than the region
             # which we read in, so we can't process the halo on this iteration regardless
