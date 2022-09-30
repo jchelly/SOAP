@@ -1,6 +1,7 @@
 #!/bin/env python
 
 import collections
+import math
 
 import numpy as np
 import h5py
@@ -315,13 +316,6 @@ class SWIFTCellGrid:
         comm_size = comm.Get_size()
         comm_rank = comm.Get_rank()
 
-        # Make a communicator containing I/O ranks only
-        colour = 0 if comm_rank < max_ranks_reading else MPI.UNDEFINED
-        comm_io = comm.Split(colour, comm_rank)
-        if comm_io != MPI.COMM_NULL:
-            comm_io_size = comm_io.Get_size()
-            comm_io_rank = comm_io.Get_rank()
-
         # Make a list of all reads to execute for each particle type in this snapshot
         reads_for_type = {}
         for ptype in property_names:
@@ -379,74 +373,88 @@ class SWIFTCellGrid:
 
         comm.barrier()
 
-        # Loop over files to read
-        for file_nr in all_file_nrs:
-            
-            # Open the current file in MPI mode
-            infile = h5py.File(self.snap_filename % {"file_nr": file_nr}, "r", driver="mpio", comm=comm)
+        # Divide communicator and assign different files to different communicators
+        max_nr_io_comms = max_ranks_reading
+        nr_io_comms = min(len(all_file_nrs), max_nr_io_comms)
+        ranks_per_io_comm = math.ceil(comm_size / nr_io_comms)
+        io_comm_nr = comm_rank // ranks_per_io_comm
+        io_comm = comm.Split(color=io_comm_nr, key=comm_rank)
+        io_comm_size = io_comm.Get_size()
+        io_comm_rank = io_comm.Get_rank()
+        nr_io_comms = comm.allreduce(io_comm_nr, op=MPI.MAX) + 1
 
-            # Loop over particle types to read
-            for ptype in reads_for_type:
+        # Loop over files to read:
+        # Snapshot files and, optionally, corresponding extra data files.
+        for file_index, file_nr in enumerate(all_file_nrs):            
+            for (filename, metadata) in ((self.snap_filename, self.snap_metadata),
+                                         (self.extra_filename, self.extra_metadata)):
 
-                # Distribute read operations for this particle type between MPI ranks
-                all_reads = reads_for_type[ptype][file_nr]
-                reads_per_rank = np.zeros(comm_size, dtype=int)
-                reads_per_rank[:] = len(all_reads) // comm_size
-                reads_per_rank[:len(all_reads) % comm_size] += 1
-                assert sum(reads_per_rank) == len(all_reads)
-                first_on_rank = np.cumsum(reads_per_rank) - reads_per_rank
-                local_reads = all_reads[first_on_rank[comm_rank]:first_on_rank[comm_rank]+reads_per_rank[comm_rank]]
+                # Skip files we're not reading
+                if filename is None or (file_index % nr_io_comms) != io_comm_nr:
+                    continue
 
-                # Loop over properties to read
-                group = infile[ptype]
-                for name in property_names[ptype]:
+                # Open the current file in MPI mode
+                infile = h5py.File(filename % {"file_nr": file_nr}, "r", driver="mpio", comm=io_comm)
 
-                    if name not in self.snap_metadata[ptype]:
-                        if comm_rank == 0:
-                            print("skipping ", name)
-                        continue
+                # Loop over particle types to read
+                for ptype in reads_for_type:
 
-                    # Open the dataset
-                    dataset = group[name]
-                    file_shape = dataset.shape
+                    # Distribute read operations for this particle type between MPI ranks
+                    all_reads = reads_for_type[ptype][file_nr]
+                    reads_per_rank = np.zeros(io_comm_size, dtype=int)
+                    reads_per_rank[:] = len(all_reads) // io_comm_size
+                    reads_per_rank[:len(all_reads) % io_comm_size] += 1
+                    assert sum(reads_per_rank) == len(all_reads)
+                    first_on_rank = np.cumsum(reads_per_rank) - reads_per_rank
+                    local_reads = all_reads[first_on_rank[io_comm_rank]:
+                                            first_on_rank[io_comm_rank]+reads_per_rank[io_comm_rank]]
 
-                    # Get the file dataspace with no elements selected
-                    file_space = dataset.id.get_space()
-                    file_space.select_none()
-                    
-                    # Select regions in the file which this rank should read
-                    for (file_offset, mem_offset, count) in local_reads:
-                        select_start = (file_offset,) + (0,)*len(file_shape[1:])
-                        select_count = (count,) + file_shape[1:]
-                        file_space.select_hyperslab(select_start, select_count, op=h5py.h5s.SELECT_OR)
+                    # Loop over properties to read
+                    group = infile[ptype]
+                    for name in property_names[ptype]:
 
-                    # Create memory dataspace with no elements selected
-                    mem_shape = (nr_parts[ptype],) + file_shape[1:]
-                    mem_space = h5py.h5s.create_simple(mem_shape)
-                    mem_space.select_none()
+                        if name not in metadata[ptype]:
+                            continue
 
-                    # Select regions in memory which this rank should read
-                    for (file_offset, mem_offset, count) in local_reads:
-                        select_start = (mem_offset,) + (0,)*len(file_shape[1:])
-                        select_count = (count,) + file_shape[1:]
-                        mem_space.select_hyperslab(select_start, select_count, op=h5py.h5s.SELECT_OR)
+                        # Open the dataset
+                        dataset = group[name]
+                        file_shape = dataset.shape
 
-                    # Do a collective read
-                    dxpl = h5py.h5p.create(h5py.h5p.DATASET_XFER)
-                    dxpl.set_dxpl_mpio(h5py.h5fd.MPIO_COLLECTIVE)
-                    dataset.id.read(mem_space, file_space, data[ptype][name].full, dxpl=dxpl)
-                    
-                    # Tidy up and move on to the next dataset
-                    dxpl.close()
-                    mem_space.close()
-                    file_space.close()
+                        # Get the file dataspace with no elements selected
+                        file_space = dataset.id.get_space()
+                        file_space.select_none()
 
-                    if comm_rank == 0:
-                        print("read ", name)
+                        # Select regions in the file which this rank should read
+                        for (file_offset, mem_offset, count) in local_reads:
+                            select_start = (file_offset,) + (0,)*len(file_shape[1:])
+                            select_count = (count,) + file_shape[1:]
+                            file_space.select_hyperslab(select_start, select_count, op=h5py.h5s.SELECT_OR)
 
+                        # Create memory dataspace with no elements selected
+                        mem_shape = (nr_parts[ptype],) + file_shape[1:]
+                        mem_space = h5py.h5s.create_simple(mem_shape)
+                        mem_space.select_none()
 
-            # Next file
-            infile.close()
+                        # Select regions in memory which this rank should read
+                        ntot = 0
+                        for (file_offset, mem_offset, count) in local_reads:
+                            select_start = (mem_offset,) + (0,)*len(file_shape[1:])
+                            select_count = (count,) + file_shape[1:]
+                            mem_space.select_hyperslab(select_start, select_count, op=h5py.h5s.SELECT_OR)
+                            ntot += count
+
+                        # Do a collective read
+                        dxpl = h5py.h5p.create(h5py.h5p.DATASET_XFER)
+                        dxpl.set_dxpl_mpio(h5py.h5fd.MPIO_COLLECTIVE)
+                        dataset.id.read(mem_space, file_space, data[ptype][name].full, dxpl=dxpl)
+
+                        # Tidy up and move on to the next dataset
+                        dxpl.close()
+                        mem_space.close()
+                        file_space.close()
+
+                # Next file
+                infile.close()
 
         # Create empty arrays for particle types which exist in the reference snapshot but not this one
         for ptype in property_names:
@@ -474,8 +482,7 @@ class SWIFTCellGrid:
                 data[ptype][name].sync()
         comm.barrier()
 
-        if comm_io != MPI.COMM_NULL:
-            comm_io.Free()
+        io_comm.Free()
 
         return data
 

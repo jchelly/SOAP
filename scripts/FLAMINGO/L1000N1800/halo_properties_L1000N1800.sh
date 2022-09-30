@@ -19,7 +19,7 @@
 #
 
 module purge
-module load gnu_comp/11.1.0 openmpi/4.1.1 python/3.10.1
+module load gnu_comp/11.1.0 openmpi/4.1.4-romio-lustre python/3.10.7
 
 # Which simulation to do
 sim="L1000N1800/${SLURM_JOB_NAME}"
@@ -46,7 +46,11 @@ outdir=`dirname "${outfile}"`
 mkdir -p "${outdir}"
 lfs setstripe --stripe-count=-1 --stripe-size=32M ${outdir}
 
-mpirun python3 -u -m mpi4py ./compute_halo_properties.py \
+export ROMIO_HINTS=/cosma/home/jch/hints.txt
+export ROMIO_PRINT_HINTS=1
+
+mpirun -mca io ^ompio python3 -u -m mpi4py ./compute_halo_properties.py \
     ${swift_filename} ${scratchdir} ${vr_basename} ${outfile} ${SLURM_ARRAY_TASK_ID} \
     --chunks=${nr_chunks} \
-    --extra-input=${extra_filename}
+    --extra-input=${extra_filename} \
+    --max-ranks-reading=8
