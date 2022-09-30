@@ -10,7 +10,6 @@ import unyt
 import scipy.spatial
 
 import swift_units
-import task_queue
 import shared_array
 
 # HDF5 chunk cache parameters:
@@ -28,74 +27,6 @@ swift_cell_t = np.dtype(
         ("order", np.int32),  # ordering of the cells in the snapshot file(s)
     ]
 )
-
-
-class DatasetCache:
-    """
-    Class to allow h5py File and Dataset objects to persist
-    between ReadTask invocations.
-    """
-
-    def __init__(self):
-
-        self.file_name = None
-        self.infile = None
-        self.dataset_name = None
-        self.dataset = None
-
-    def open_dataset(self, file_name, dataset_name):
-
-        if file_name != self.file_name:
-            self.infile = h5py.File(file_name, "r", rdcc_nbytes=rdcc_nbytes)
-            self.file_name = file_name
-            self.dataset_name = None
-            self.dataset = None
-
-        if dataset_name != self.dataset_name:
-            self.dataset = self.infile[dataset_name]
-            self.dataset_name = dataset_name
-
-        return self.dataset
-
-    def close(self):
-        self.dataset = None
-        self.dataset_name = None
-        if self.infile is not None:
-            self.infile.close()
-        self.file_name = None
-
-
-class ReadTask:
-    """
-    Class to execute a read of a single contiguous chunk of an array
-    """
-
-    def __init__(self, file_name, ptype, dataset, file_offset, mem_offset, count):
-
-        self.file_name = file_name
-        self.ptype = ptype
-        self.dataset = dataset
-        self.file_offset = file_offset
-        self.mem_offset = mem_offset
-        self.count = count
-
-    def __call__(self, data, cache):
-
-        # Find the dataset
-        dataset_name = self.ptype + "/" + self.dataset
-        dataset = cache.open_dataset(self.file_name, dataset_name)
-
-        # Read the data
-        mem_start = self.mem_offset
-        mem_end = self.mem_offset + self.count
-        file_start = self.file_offset
-        file_end = self.file_offset + self.count
-
-        dataset.read_direct(
-            data[self.ptype][self.dataset].full,
-            np.s_[file_start:file_end, ...],
-            np.s_[mem_start:mem_end, ...],
-        )
 
 
 def identify_datasets(filename, nr_files, ptypes, registry):
@@ -346,25 +277,6 @@ class SWIFTCellGrid:
         idx = np.lexsort((cells_to_read["offset"], cells_to_read["file"]))
         cells_to_read = cells_to_read[idx]
 
-        # Merge adjacent cells
-        max_size = 20 * 1024**2
-        nr_to_read = len(cells_to_read)
-        for cell_nr in range(nr_to_read - 1):
-            cell1 = cells_to_read[cell_nr]
-            cell2 = cells_to_read[cell_nr + 1]
-            if (
-                cell1["file"] == cell2["file"]
-                and cell1["offset"] + cell1["count"] == cell2["offset"]
-                and (cell1["count"] + cell2["count"]) <= max_size
-            ):
-                # Merge cells: put the particles in cell2 and empty cell1
-                cell2["count"] += cell1["count"]
-                cell2["offset"] = cell1["offset"]
-                cell1["count"] = 0
-
-        # Discard any cells which are now empty due to the merging
-        cells_to_read = cells_to_read[cells_to_read["count"] > 0]
-
         # Find unique file numbers to read
         unique_file_nrs = np.unique(cells_to_read["file"])
 
@@ -432,113 +344,109 @@ class SWIFTCellGrid:
                     ]:
                         nr_parts[ptype] += count
 
-        # Create read tasks in the required order:
-        # By file, then by particle type, then by dataset, then by offset in the file
-        all_tasks = collections.deque()
-        for file_nr in all_file_nrs:
-            filename = self.snap_filename % {"file_nr": file_nr}
-            for ptype in reads_for_type:
-                for dataset in property_names[ptype]:
-                    if dataset in self.snap_metadata[ptype]:
-                        if file_nr in reads_for_type[ptype]:
-                            for (file_offset, mem_offset, count) in reads_for_type[
-                                ptype
-                            ][file_nr]:
-                                all_tasks.append(
-                                    ReadTask(
-                                        filename,
-                                        ptype,
-                                        dataset,
-                                        file_offset,
-                                        mem_offset,
-                                        count,
-                                    )
-                                )
-
-        # Create additional read tasks for the extra data files
-        if self.extra_filename is not None:
-            for file_nr in all_file_nrs:
-                filename = self.extra_filename % {"file_nr": file_nr}
-                for ptype in reads_for_type:
-                    for dataset in property_names[ptype]:
-                        if dataset in self.extra_metadata[ptype]:
-                            if file_nr in reads_for_type[ptype]:
-                                for (file_offset, mem_offset, count) in reads_for_type[
-                                    ptype
-                                ][file_nr]:
-                                    all_tasks.append(
-                                        ReadTask(
-                                            filename,
-                                            ptype,
-                                            dataset,
-                                            file_offset,
-                                            mem_offset,
-                                            count,
-                                        )
-                                    )
-
-        if comm_io != MPI.COMM_NULL:
-            # Make one task queue per MPI rank reading
-            tasks = [collections.deque() for _ in range(comm_io_size)]
-
-            # Share tasks over the task queues roughly equally by number
-            nr_tasks = len(all_tasks)
-            tasks_per_rank = nr_tasks // comm_io_size
-            for rank in range(comm_io_size):
-                for _ in range(tasks_per_rank):
-                    tasks[rank].append(all_tasks.popleft())
-                if rank < nr_tasks % comm_io_size:
-                    tasks[rank].append(all_tasks.popleft())
-            assert len(all_tasks) == 0
-
         # Allocate MPI shared memory for the particle data for types which exist
         # in this snapshot. Note that these allocations could have zero size if
         # there are no particles of a type in the masked cells.
         data = {}
         for ptype in reads_for_type:
-            if ptype in self.ptypes:
-                data[ptype] = {}
-                for name in property_names[ptype]:
+            data[ptype] = {}
+            for name in property_names[ptype]:
 
-                    # Get metadata for array to allocate in memory
-                    if name in self.snap_metadata[ptype]:
-                        units, dtype, shape = self.snap_metadata[ptype][name]
-                    elif (
-                        self.extra_metadata is not None
-                        and name in self.extra_metadata[ptype]
-                    ):
-                        units, dtype, shape = self.extra_metadata[ptype][name]
-                    else:
-                        raise Exception(
-                            "Can't find required dataset %s in input file(s)!" % name
-                        )
-
-                    # Determine size of local array section
-                    nr_local = nr_parts[ptype] // comm_size
-                    if comm_rank < (nr_parts[ptype] % comm_size):
-                        nr_local += 1
-                    # Find global and local shape of the array
-                    global_shape = (nr_parts[ptype],) + shape
-                    local_shape = (nr_local,) + shape
-                    # Allocate storage
-                    data[ptype][name] = shared_array.SharedArray(
-                        local_shape, dtype, comm, units
+                # Get metadata for array to allocate in memory
+                if name in self.snap_metadata[ptype]:
+                    units, dtype, shape = self.snap_metadata[ptype][name]
+                elif (
+                    self.extra_metadata is not None
+                    and name in self.extra_metadata[ptype]
+                ):
+                    units, dtype, shape = self.extra_metadata[ptype][name]
+                else:
+                    raise Exception(
+                        "Can't find required dataset %s in input file(s)!" % name
                     )
+
+                # Determine size of local array section
+                nr_local = nr_parts[ptype] // comm_size
+                if comm_rank < (nr_parts[ptype] % comm_size):
+                    nr_local += 1
+                # Find global and local shape of the array
+                global_shape = (nr_parts[ptype],) + shape
+                local_shape = (nr_local,) + shape
+                # Allocate storage
+                data[ptype][name] = shared_array.SharedArray(
+                    local_shape, dtype, comm, units
+                )
 
         comm.barrier()
 
-        # Execute the tasks
-        if comm_io != MPI.COMM_NULL:
-            cache = DatasetCache()
-            task_queue.execute_tasks(
-                tasks,
-                args=(data, cache),
-                comm_all=comm_io,
-                comm_master=comm_io,
-                comm_workers=MPI.COMM_SELF,
-                queue_per_rank=True,
-            )
-            cache.close()
+        # Loop over files to read
+        for file_nr in all_file_nrs:
+            
+            # Open the current file in MPI mode
+            infile = h5py.File(self.snap_filename % {"file_nr": file_nr}, "r", driver="mpio", comm=comm)
+
+            # Loop over particle types to read
+            for ptype in reads_for_type:
+
+                # Distribute read operations for this particle type between MPI ranks
+                all_reads = reads_for_type[ptype][file_nr]
+                reads_per_rank = np.zeros(comm_size, dtype=int)
+                reads_per_rank[:] = len(all_reads) // comm_size
+                reads_per_rank[:len(all_reads) % comm_size] += 1
+                assert sum(reads_per_rank) == len(all_reads)
+                first_on_rank = np.cumsum(reads_per_rank) - reads_per_rank
+                local_reads = all_reads[first_on_rank[comm_rank]:first_on_rank[comm_rank]+reads_per_rank[comm_rank]]
+
+                # Loop over properties to read
+                group = infile[ptype]
+                for name in property_names[ptype]:
+
+                    if name not in self.snap_metadata[ptype]:
+                        if comm_rank == 0:
+                            print("skipping ", name)
+                        continue
+
+                    # Open the dataset
+                    dataset = group[name]
+                    file_shape = dataset.shape
+
+                    # Get the file dataspace with no elements selected
+                    file_space = dataset.id.get_space()
+                    file_space.select_none()
+                    
+                    # Select regions in the file which this rank should read
+                    for (file_offset, mem_offset, count) in local_reads:
+                        select_start = (file_offset,) + (0,)*len(file_shape[1:])
+                        select_count = (count,) + file_shape[1:]
+                        file_space.select_hyperslab(select_start, select_count, op=h5py.h5s.SELECT_OR)
+
+                    # Create memory dataspace with no elements selected
+                    mem_shape = (nr_parts[ptype],) + file_shape[1:]
+                    mem_space = h5py.h5s.create_simple(mem_shape)
+                    mem_space.select_none()
+
+                    # Select regions in memory which this rank should read
+                    for (file_offset, mem_offset, count) in local_reads:
+                        select_start = (mem_offset,) + (0,)*len(file_shape[1:])
+                        select_count = (count,) + file_shape[1:]
+                        mem_space.select_hyperslab(select_start, select_count, op=h5py.h5s.SELECT_OR)
+
+                    # Do a collective read
+                    dxpl = h5py.h5p.create(h5py.h5p.DATASET_XFER)
+                    dxpl.set_dxpl_mpio(h5py.h5fd.MPIO_COLLECTIVE)
+                    dataset.id.read(mem_space, file_space, data[ptype][name].full, dxpl=dxpl)
+                    
+                    # Tidy up and move on to the next dataset
+                    dxpl.close()
+                    mem_space.close()
+                    file_space.close()
+
+                    if comm_rank == 0:
+                        print("read ", name)
+
+
+            # Next file
+            infile.close()
 
         # Create empty arrays for particle types which exist in the reference snapshot but not this one
         for ptype in property_names:
