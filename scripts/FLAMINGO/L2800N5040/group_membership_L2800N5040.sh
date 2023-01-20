@@ -8,13 +8,13 @@
 #
 # sbatch -J HYDRO_FIDUCIAL --array=78 ./group_membership_L2800N5040.sh
 #
-#SBATCH --nodes=16
+#SBATCH --nodes=32
 #SBATCH --cpus-per-task=1
 #SBATCH -o ./logs/group_membership_L2800N5040_%x.%a.out
 #SBATCH -p cosma8
 #SBATCH -A dp004
 #SBATCH --exclusive
-#SBATCH -t 72:00:00
+#SBATCH -t 12:00:00
 #
 
 module purge
