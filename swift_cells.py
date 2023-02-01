@@ -12,6 +12,7 @@ import scipy.spatial
 
 import swift_units
 import shared_array
+import collective_metadata as cm
 
 # HDF5 chunk cache parameters:
 # SWIFT writes datasets with large chunks so the default 1Mb may be too small
@@ -394,7 +395,7 @@ class SWIFTCellGrid:
                     continue
 
                 # Open the current file in MPI mode
-                infile = h5py.File(filename % {"file_nr": file_nr}, "r", driver="mpio", comm=io_comm)
+                infile = cm.open_file(filename % {"file_nr": file_nr}, comm=io_comm)
 
                 # Loop over particle types to read
                 for ptype in reads_for_type:
