@@ -397,6 +397,13 @@ class SWIFTCellGrid:
                 # Open the current file in MPI mode
                 infile = cm.open_file(filename % {"file_nr": file_nr}, comm=io_comm)
 
+                # Will construct sequences of datasets and selections for read_multi() call
+                datasets = []
+                mem_types = []
+                mem_spaces = []
+                file_spaces = []
+                buffers = []
+                
                 # Loop over particle types to read
                 for ptype in reads_for_type:
 
@@ -444,15 +451,32 @@ class SWIFTCellGrid:
                             mem_space.select_hyperslab(select_start, select_count, op=h5py.h5s.SELECT_OR)
                             ntot += count
 
-                        # Do a collective read
-                        dxpl = h5py.h5p.create(h5py.h5p.DATASET_XFER)
-                        dxpl.set_dxpl_mpio(h5py.h5fd.MPIO_COLLECTIVE)
-                        dataset.id.read(mem_space, file_space, data[ptype][name].full, dxpl=dxpl)
+                        # Get the memory data type
+                        dtype = data[ptype][name].full.dtype
+                        mem_type = h5py.h5t.py_create(dtype)
 
-                        # Tidy up and move on to the next dataset
-                        dxpl.close()
-                        mem_space.close()
-                        file_space.close()
+                        # Store information needed for the read operation
+                        datasets.append(dataset)
+                        mem_types.append(mem_type)
+                        mem_spaces.append(mem_space)
+                        file_spaces.append(file_space)
+                        buffers.append(data[ptype][name].full)
+
+                # Execute the parallel read
+                dxpl = h5py.h5p.create(h5py.h5p.DATASET_XFER)
+                dxpl.set_dxpl_mpio(h5py.h5fd.MPIO_COLLECTIVE)
+                h5py.h5d.read_multi(datasets, mem_types, mem_spaces, file_spaces, dxpl, buffers)
+
+                # Tidy up
+                for mem_type in mem_types:
+                    mem_type.close()
+                for mem_space in mem_spaces:
+                    mem_space.close()
+                for file_space in file_spaces:
+                    file_space.close()
+                del buffers
+                del datasets
+                dxpl.close()
 
                 # Next file
                 infile.close()
