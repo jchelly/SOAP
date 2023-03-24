@@ -322,7 +322,7 @@ class SingleProjectionProjectedApertureParticleData:
             return None
         proj_vgas = self.proj_velocity[self.proj_type == "PartType0", self.iproj]
         vcom_gas = (self.gas_mass_fraction * proj_vgas).sum()
-        return np.sqrt(((proj_vgas - vcom_gas) ** 2).sum())
+        return np.sqrt((self.gas_mass_fraction * (proj_vgas - vcom_gas) ** 2).sum())
 
     @lazy_property
     def ProjectedGasAxisLengths(self):
@@ -344,7 +344,7 @@ class SingleProjectionProjectedApertureParticleData:
             return None
         proj_vdm = self.proj_velocity[self.proj_type == "PartType1", self.iproj]
         vcom_dm = (self.dm_mass_fraction * proj_vdm).sum()
-        return np.sqrt(((proj_vdm - vcom_dm) ** 2).sum())
+        return np.sqrt((self.dm_mass_fraction * (proj_vdm - vcom_dm) ** 2).sum())
 
     @lazy_property
     def star_mass_fraction(self):
@@ -358,7 +358,7 @@ class SingleProjectionProjectedApertureParticleData:
             return None
         proj_vstar = self.proj_velocity[self.proj_type == "PartType4", self.iproj]
         vcom_star = (self.star_mass_fraction * proj_vstar).sum()
-        return np.sqrt(((proj_vstar - vcom_star) ** 2).sum())
+        return np.sqrt((self.star_mass_fraction * (proj_vstar - vcom_star) ** 2).sum())
 
     @lazy_property
     def ProjectedStellarAxisLengths(self):
@@ -580,6 +580,7 @@ class ProjectedApertureProperties(HaloProperty):
                 if do_calculation[category]:
                     val = getattr(proj_part_props, name)
                     if val is not None:
+                        assert projected_aperture[name].shape == val.shape, f"Attempting to store {name} with wrong dimensions"
                         if unit == "dimensionless":
                             projected_aperture[name] = unyt.unyt_array(
                                 val.astype(dtype),
