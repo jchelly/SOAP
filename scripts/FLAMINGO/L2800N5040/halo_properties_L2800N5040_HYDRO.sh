@@ -3,26 +3,26 @@
 # Compute halo properties for a snapshot. Must run the group_membership
 # script first.
 #
-# Job name determines which of the L1000N1800 runs we process.
+# Job name determines which of the L2800N5040 runs we process.
 # Array job index is the snapshot number to do. Submit with (for example):
 #
-# sbatch -J HYDRO_FIDUCIAL --array=77 ./halo_properties_L1000N1800.sh
+# sbatch -J HYDRO_FIDUCIAL --array=78 ./halo_properties_L2800N5040_HYDRO.sh
 #
-#SBATCH --nodes=4
+#SBATCH --nodes=16
 #SBATCH --cpus-per-task=1
 #SBATCH -J test_halo_props
-#SBATCH -o ./logs/halo_properties_L1000N1800_%x.%a.out
+#SBATCH -o ./logs/halo_properties_L2800N5040_%x.%a.out
 #SBATCH -p cosma8
 #SBATCH -A dp004
 #SBATCH --exclusive
-#SBATCH -t 4:00:00
+#SBATCH -t 72:00:00
 #
 
 module purge
 module load gnu_comp/11.1.0 openmpi/4.1.1 python/3.10.1
 
 # Which simulation to do
-sim="L1000N1800/${SLURM_JOB_NAME}"
+sim="L2800N5040/${SLURM_JOB_NAME}"
 
 # Input simulation location
 basedir="/cosma8/data/dp004/flamingo/Runs/${sim}/"
@@ -39,7 +39,7 @@ extra_filename="${outbase}/group_membership/group_membership_%(snap_nr)04d/vr_me
 vr_basename="${basedir}/VR/catalogue_%(snap_nr)04d/vr_catalogue_%(snap_nr)04d"
 outfile="${outbase}/halo_properties/halo_properties_%(snap_nr)04d.hdf5"
 
-nr_chunks=4
+nr_chunks=80
 
 # Create output directory
 outdir=`dirname "${outfile}"`

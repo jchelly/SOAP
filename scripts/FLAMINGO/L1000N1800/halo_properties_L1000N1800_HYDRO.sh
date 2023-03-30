@@ -3,15 +3,15 @@
 # Compute halo properties for a snapshot. Must run the group_membership
 # script first.
 #
-# Job name determines which of the L1000N3600 runs we process.
+# Job name determines which of the L1000N1800 runs we process.
 # Array job index is the snapshot number to do. Submit with (for example):
 #
-# sbatch -J HYDRO_FIDUCIAL --array=78 ./halo_properties_L1000N3600.sh
+# sbatch -J HYDRO_FIDUCIAL --array=77 ./halo_properties_L1000N1800_HYDRO.sh
 #
 #SBATCH --nodes=4
 #SBATCH --cpus-per-task=1
 #SBATCH -J test_halo_props
-#SBATCH -o ./logs/halo_properties_L1000N3600_%x.%a.out
+#SBATCH -o ./logs/halo_properties_L1000N1800_%x.%a.out
 #SBATCH -p cosma8
 #SBATCH -A dp004
 #SBATCH --exclusive
@@ -22,7 +22,7 @@ module purge
 module load gnu_comp/11.1.0 openmpi/4.1.1 python/3.10.1
 
 # Which simulation to do
-sim="L1000N3600/${SLURM_JOB_NAME}"
+sim="L1000N1800/${SLURM_JOB_NAME}"
 
 # Input simulation location
 basedir="/cosma8/data/dp004/flamingo/Runs/${sim}/"
@@ -39,12 +39,12 @@ extra_filename="${outbase}/group_membership/group_membership_%(snap_nr)04d/vr_me
 vr_basename="${basedir}/VR/catalogue_%(snap_nr)04d/vr_catalogue_%(snap_nr)04d"
 outfile="${outbase}/halo_properties/halo_properties_%(snap_nr)04d.hdf5"
 
-nr_chunks=32
+nr_chunks=4
 
 # Create output directory
 outdir=`dirname "${outfile}"`
 mkdir -p "${outdir}"
-lfs setstripe --stripe-count=-1 --stripe-size=32M "${outdir}"
+lfs setstripe --stripe-count=-1 --stripe-size=32M ${outdir}
 
 mpirun python3 -u -m mpi4py ./compute_halo_properties.py \
     ${swift_filename} ${scratchdir} ${vr_basename} ${outfile} ${SLURM_ARRAY_TASK_ID} \

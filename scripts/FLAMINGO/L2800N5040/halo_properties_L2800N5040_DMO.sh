@@ -3,32 +3,31 @@
 # Compute halo properties for a snapshot. Must run the group_membership
 # script first.
 #
-# Job name determines which of the L1000N0900 runs we process.
+# Job name determines which of the L2800N5040 runs we process.
 # Array job index is the snapshot number to do. Submit with (for example):
 #
-# sbatch -J HYDRO_FIDUCIAL --array=77 ./halo_properties_L1000N0900.sh
+# sbatch -J DMO_FIDUCIAL --array=78 ./halo_properties_L2800N5040_DMO.sh
 #
-#SBATCH --nodes=1
+#SBATCH --nodes=16
 #SBATCH --cpus-per-task=1
-#SBATCH --tasks-per-node=128
 #SBATCH -J test_halo_props
-#SBATCH -o ./logs/halo_properties_L1000N0900_%x.%a.out
-#SBATCH -p cosma8-shm2
+#SBATCH -o ./logs/halo_properties_L2800N5040_%x.%a.out
+#SBATCH -p cosma8
 #SBATCH -A dp004
-##SBATCH --exclusive
-#SBATCH -t 4:00:00
+#SBATCH --exclusive
+#SBATCH -t 72:00:00
 #
 
 module purge
 module load gnu_comp/11.1.0 openmpi/4.1.1 python/3.10.1
 
 # Which simulation to do
-sim="L1000N0900/${SLURM_JOB_NAME}"
+sim="L2800N5040/${SLURM_JOB_NAME}"
 
 # Input simulation location
 basedir="/cosma8/data/dp004/flamingo/Runs/${sim}/"
 
-# Where to write the output
+# Where to write the final output
 outbase="/cosma8/data/dp004/jch/FLAMINGO/ScienceRuns/${sim}/"
 
 # Location for temporary chunk output
@@ -40,15 +39,17 @@ extra_filename="${outbase}/group_membership/group_membership_%(snap_nr)04d/vr_me
 vr_basename="${basedir}/VR/catalogue_%(snap_nr)04d/vr_catalogue_%(snap_nr)04d"
 outfile="${outbase}/halo_properties/halo_properties_%(snap_nr)04d.hdf5"
 
-nr_chunks=1
+nr_chunks=80
 
 # Create output directory
 outdir=`dirname "${outfile}"`
 mkdir -p "${outdir}"
 lfs setstripe --stripe-count=-1 --stripe-size=32M ${outdir}
 
+# add the "--dmo" flag to prevent computing/outputting quantities that are
+# not relevant for DMO runs!
 mpirun python3 -u -m mpi4py ./compute_halo_properties.py \
     ${swift_filename} ${scratchdir} ${vr_basename} ${outfile} ${SLURM_ARRAY_TASK_ID} \
     --chunks=${nr_chunks} \
     --extra-input=${extra_filename} \
-    --max-ranks-reading=128
+    --dmo
